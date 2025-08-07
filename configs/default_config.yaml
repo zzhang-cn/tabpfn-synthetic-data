@@ -1,0 +1,109 @@
+# TabPFN Synthetic Data Generation Configuration
+
+# Dataset generation parameters
+dataset:
+  n_samples:
+    min: 100
+    max: 2048
+    distribution: "uniform"
+  n_features:
+    distribution: "beta"
+    params:
+      alpha: 0.95
+      beta: 8.0
+    range: [1, 160]
+  max_cells: 75000  # Maximum table size constraint
+  train_val_split: 0.8
+
+# Graph generation parameters
+graph:
+  n_nodes:
+    distribution: "log_uniform"
+    min: 5
+    max: 100
+  redirection_probability:
+    distribution: "gamma"
+    alpha: 2.0
+    beta: 1.0
+  graph_type: "scale_free"  # Options: "scale_free", "erdos_renyi", "barabasi_albert"
+  ensure_connected: true
+
+# Computational edge parameters
+edges:
+  type_probabilities:
+    neural_network: 0.4
+    discretization: 0.2
+    decision_tree: 0.2
+    noise: 0.2
+  
+  neural_network:
+    activations: ["identity", "sigmoid", "relu", "tanh", "sin", "abs", "square", "log", "exp"]
+    hidden_dims: [8, 16, 32, 64]
+    use_bias: true
+    initialization: "xavier"
+  
+  discretization:
+    n_categories:
+      min: 2
+      max: 10
+    embedding_dim: 8
+  
+  decision_tree:
+    max_depth: 3
+    min_samples_split: 5
+    criterion: "random"  # Random splitting criterion
+  
+  noise:
+    std_range: [0.01, 0.5]
+    distribution: "normal"  # Options: "normal", "uniform", "laplace"
+
+# Initialization parameters
+initialization:
+  distribution_types: ["normal", "uniform", "mixed"]
+  normal:
+    mean: 0
+    std: 1
+  uniform:
+    low: -1
+    high: 1
+  non_independence:
+    enabled: true
+    prototype_fraction: 0.3  # Fraction of samples to use as prototypes
+    temperature: 1.0  # Controls mixing weights concentration
+
+# Post-processing parameters
+post_processing:
+  kumaraswamy_warping:
+    enabled: true
+    probability: 0.3
+    a_range: [0.5, 2.0]
+    b_range: [0.5, 2.0]
+  
+  quantization:
+    enabled: true
+    probability: 0.3
+    n_bins: [5, 10, 20]
+  
+  missing_values:
+    enabled: true
+    probability: 0.2
+    missing_rate: [0.0, 0.3]
+    mechanism: "mcar"  # Missing Completely At Random
+
+# Target generation
+target:
+  regression:
+    select_from: "continuous"  # Select from continuous features
+    apply_transform: false
+  classification:
+    select_from: "categorical"  # Select from categorical features
+    max_classes: 10
+
+# Reproducibility
+seed: 42
+deterministic: true
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
