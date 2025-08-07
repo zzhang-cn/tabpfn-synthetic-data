@@ -115,4 +115,127 @@ class InitializationSampler:
         Returns:
             Mixed samples
         """
-        data = np.zeros((n_samples, n_f
+        data = np.zeros((n_samples, n_features))
+        
+        for j in range(n_features):
+            if self.rng.random() < 0.5:
+                # Normal
+                data[:, j] = self._sample_normal(n_samples, 1).flatten()
+            else:
+                # Uniform
+                data[:, j] = self._sample_uniform(n_samples, 1).flatten()
+        
+        return data
+    
+    def _apply_non_independence(self, data: np.ndarray) -> np.ndarray:
+        """Apply non-independence between samples.
+        
+        This creates correlations between samples by mixing them with
+        prototype samples, following the TabPFN paper approach.
+        
+        Args:
+            data: Independent samples
+            
+        Returns:
+            Non-independent samples
+        """
+        n_samples, n_features = data.shape
+        
+        # Get non-independence parameters
+        ni_config = self.config.get('non_independence', {})
+        prototype_fraction = ni_config.get('prototype_fraction', 0.3)
+        temperature = ni_config.get('temperature', 1.0)
+        
+        # Number of prototypes
+        n_prototypes = max(1, int(n_samples * prototype_fraction))
+        
+        # Select prototype samples
+        prototype_idx = self.rng.choice(n_samples, n_prototypes, replace=False)
+        prototypes = data[prototype_idx].copy()
+        
+        # Mix samples with prototypes
+        mixed_data = np.zeros_like(data)
+        
+        for i in range(n_samples):
+            if i in prototype_idx:
+                # Prototypes remain unchanged
+                mixed_data[i] = data[i]
+            else:
+                # Sample mixing weights from Dirichlet distribution
+                # Temperature controls concentration
+                alpha = np.ones(n_prototypes) / temperature
+                weights = self.rng.dirichlet(alpha)
+                
+                # Mix with prototypes
+                mixed_data[i] = weights @ prototypes
+                
+                # Add some noise to maintain variation
+                noise_scale = 0.1
+                mixed_data[i] += self.rng.normal(0, noise_scale, n_features)
+        
+        return mixed_data
+    
+    def sample_with_correlation(self, n_samples: int, n_features: int,
+                               correlation: float = 0.5) -> np.ndarray:
+        """Sample data with specified correlation between features.
+        
+        Args:
+            n_samples: Number of samples
+            n_features: Number of features
+            correlation: Correlation strength (0-1)
+            
+        Returns:
+            Correlated samples
+        """
+        # Create correlation matrix
+        corr_matrix = np.eye(n_features)
+        
+        # Add off-diagonal correlations
+        for i in range(n_features):
+            for j in range(i + 1, n_features):
+                # Random correlation up to specified strength
+                corr = self.rng.uniform(-correlation, correlation)
+                corr_matrix[i, j] = corr
+                corr_matrix[j, i] = corr
+        
+        # Ensure positive definite
+        min_eig = np.min(np.linalg.eigvals(corr_matrix))
+        if min_eig < 0:
+            corr_matrix -= 1.1 * min_eig * np.eye(n_features)
+        
+        # Generate correlated normal samples
+        mean = np.zeros(n_features)
+        samples = self.rng.multivariate_normal(mean, corr_matrix, n_samples)
+        
+        return samples
+    
+    def sample_clustered(self, n_samples: int, n_features: int,
+                        n_clusters: int = 3) -> np.ndarray:
+        """Sample data with cluster structure.
+        
+        Args:
+            n_samples: Number of samples
+            n_features: Number of features
+            n_clusters: Number of clusters
+            
+        Returns:
+            Clustered samples
+        """
+        data = np.zeros((n_samples, n_features))
+        
+        # Assign samples to clusters
+        cluster_assignments = self.rng.randint(0, n_clusters, n_samples)
+        
+        # Generate cluster centers
+        centers = self.rng.normal(0, 2, (n_clusters, n_features))
+        
+        # Generate samples around centers
+        for i in range(n_samples):
+            cluster = cluster_assignments[i]
+            center = centers[cluster]
+            
+            # Add noise around center
+            noise = self.rng.normal(0, 0.5, n_features)
+            data[i] = center + noise
+        
+        return data
