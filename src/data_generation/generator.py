@@ -195,3 +195,147 @@ class SyntheticDataGenerator:
         return datasets
     
     def _sample_n_samples(self) -> int:
+        """Sample number of samples.
+        
+        Returns:
+            Number of samples
+        """
+        sample_config = self.config.get('dataset.n_samples', {})
+        
+        if sample_config.get('distribution') == 'uniform':
+            return self.rng.randint(
+                sample_config.get('min', 100),
+                sample_config.get('max', 2048) + 1
+            )
+        else:
+            # Default uniform sampling
+            return self.rng.randint(100, 2049)
+    
+    def _sample_n_features(self) -> int:
+        """Sample number of features.
+        
+        Returns:
+            Number of features
+        """
+        feature_config = self.config.get('dataset.n_features', {})
+        
+        if feature_config.get('distribution') == 'beta':
+            params = feature_config.get('params', {'alpha': 0.95, 'beta': 8.0})
+            range_vals = feature_config.get('range', [1, 160])
+            
+            sample = self.dist_sampler.sample_beta_scaled(
+                params['alpha'], params['beta'],
+                range_vals[0], range_vals[1]
+            )
+            return int(sample[0])
+        else:
+            return self.rng.randint(1, 161)
+    
+    def _select_categorical_target(self, 
+                                  node_data: Dict[int, np.ndarray],
+                                  candidate_nodes: List[int]) -> int:
+        """Select or create a categorical target node.
+        
+        Args:
+            node_data: Data for all nodes
+            candidate_nodes: Candidate nodes for target
+            
+        Returns:
+            Target node index
+        """
+        # Look for naturally discrete nodes
+        for node in candidate_nodes:
+            data = node_data[node]
+            n_unique = len(np.unique(data))
+            
+            # Check if naturally discrete with reasonable number of classes
+            if n_unique <= 10 and n_unique >= 2:
+                return node
+        
+        # If no good categorical found, discretize a continuous node
+        if candidate_nodes:
+            target_node = candidate_nodes[0]
+            # Discretize into classes
+            n_classes = self.rng.randint(2, 11)
+            data = node_data[target_node]
+            
+            # Use quantiles for balanced classes
+            quantiles = np.linspace(0, 100, n_classes + 1)[1:-1]
+            thresholds = np.percentile(data, quantiles)
+            node_data[target_node] = np.digitize(data, thresholds)
+            
+            return target_node
+        
+        # Fallback: use last node
+        return list(node_data.keys())[-1]
+    
+    def save_dataset(self, dataset: Dict, path: Union[str, Path], format: str = 'npz'):
+        """Save dataset to file.
+        
+        Args:
+            dataset: Dataset dictionary
+            path: Save path
+            format: File format ('npz', 'csv', 'pkl')
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        if format == 'npz':
+            X_train, y_train = dataset['train']
+            X_test, y_test = dataset['test']
+            
+            np.savez(path,
+                    X_train=X_train, y_train=y_train,
+                    X_test=X_test, y_test=y_test,
+                    task_type=dataset['task_type'])
+            
+        elif format == 'csv':
+            # Save as separate CSV files
+            for split in ['train', 'test']:
+                X, y = dataset[split]
+                df = pd.DataFrame(X, columns=[f'feature_{i}' for i in range(X.shape[1])])
+                df['target'] = y
+                
+                split_path = path.parent / f"{path.stem}_{split}.csv"
+                df.to_csv(split_path, index=False)
+        
+        elif format == 'pkl':
+            import pickle
+            with open(path, 'wb') as f:
+                pickle.dump(dataset, f)
+        
+        else:
+            raise ValueError(f"Unknown format: {format}")
+        
+        logger.info(f"Saved dataset to {path}")
+    
+    @staticmethod
+    def load_dataset(path: Union[str, Path], format: str = 'npz') -> Dict:
+        """Load dataset from file.
+        
+        Args:
+            path: File path
+            format: File format
+            
+        Returns:
+            Dataset dictionary
+        """
+        path = Path(path)
+        
+        if format == 'npz':
+            data = np.load(path, allow_pickle=True)
+            dataset = {
+                'train': (data['X_train'], data['y_train']),
+                'test': (data['X_test'], data['y_test']),
+                'task_type': str(data['task_type'])
+            }
+            
+        elif format == 'pkl':
+            import pickle
+            with open(path, 'rb') as f:
+                dataset = pickle.load(f)
+        
+        else:
+            raise ValueError(f"Unknown format: {format}")
+        
+        return dataset
