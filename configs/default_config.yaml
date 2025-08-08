@@ -17,6 +17,22 @@ dataset:
 
 # Graph generation parameters
 graph:
+  # Generation method: "motif_based", "scale_free", "erdos_renyi", "barabasi_albert"
+  generation_method: "motif_based"  # NEW: Choose generation strategy
+  
+  # For motif-based generation
+  motif_based:
+    target_density: 0.1  # Target edge density
+    motif_probs:
+      chain: 0.4      # A → B → C (sequential causation)
+      fork: 0.3       # A ← B → C (common cause/confounder)
+      collider: 0.3   # A → B ← C (common effect)
+    hierarchical:
+      enabled: true
+      n_levels: 3     # Number of hierarchical levels
+      cluster_size: 5 # Nodes per cluster
+  
+  # For random generation methods (existing)
   n_nodes:
     distribution: "log_uniform"
     min: 5
@@ -25,7 +41,7 @@ graph:
     distribution: "gamma"
     alpha: 2.0
     beta: 1.0
-  graph_type: "scale_free"  # Options: "scale_free", "erdos_renyi", "barabasi_albert"
+  graph_type: "scale_free"  # DEPRECATED: Use generation_method instead
   ensure_connected: true
 
 # Computational edge parameters
