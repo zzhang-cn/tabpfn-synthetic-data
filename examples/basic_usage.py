@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import sys
+import json
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,10 +23,11 @@ def example_basic_generation():
     generator = SyntheticDataGenerator(seed=42)
     
     # Generate a classification dataset
-    dataset = generator.generate_dataset(
+    dataset, metadata = generator.generate_dataset(
         n_samples=1000,
         n_features=10,
-        task_type='classification'
+        task_type='classification',
+        return_metadata=True,
     )
     
     # Extract data
@@ -36,7 +38,8 @@ def example_basic_generation():
     print(f"Test set shape: {X_test.shape}")
     print(f"Number of classes: {len(np.unique(y_train))}")
     print(f"Class distribution: {np.bincount(y_train)}")
-    
+    print(f"Metadata: {json.dumps(metadata, indent=2)}")
+
     return dataset
 
 
@@ -272,12 +275,12 @@ def main():
     print("\n🚀 TABPFN SYNTHETIC DATA GENERATION EXAMPLES\n")
     
     # Run examples
-    example_basic_generation()
-    example_with_metadata()
-    example_batch_generation()
-    example_custom_config()
+    #example_basic_generation()
+    #example_with_metadata()
+    #example_batch_generation()
+    #example_custom_config()
     example_visualization()
-    example_save_load()
+    #example_save_load()
     
     print("\n✅ All examples completed successfully!")
     print("\nYou can now use the SyntheticDataGenerator in your own projects.")

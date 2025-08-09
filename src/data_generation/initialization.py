@@ -31,15 +31,16 @@ class InitializationSampler:
         
         logger.debug("Initialized InitializationSampler")
     
-    def sample(self, n_samples: int, graph: nx.DiGraph) -> np.ndarray:
+    def sample(self, n_samples: int, graph: nx.DiGraph, vector_dim: int = 8) -> np.ndarray:
         """Sample initialization data for root nodes.
         
         Args:
             n_samples: Number of samples
             graph: Causal graph
+            vector_dim: Dimension of node vectors
             
         Returns:
-            Initialization data array (n_samples, n_root_nodes)
+            Initialization data array (n_samples, n_root_nodes, vector_dim)
         """
         # Get root nodes (no parents)
         root_nodes = [n for n in graph.nodes() if graph.in_degree(n) == 0]
@@ -47,9 +48,9 @@ class InitializationSampler:
         
         if n_roots == 0:
             logger.warning("No root nodes found in graph")
-            return np.empty((n_samples, 0))
+            return np.empty((n_samples, 0, vector_dim))
         
-        logger.debug(f"Sampling initialization for {n_roots} root nodes")
+        logger.debug(f"Sampling initialization for {n_roots} root nodes with vector_dim={vector_dim}")
         
         # Sample distribution type
         dist_types = self.config.get('distribution_types', ['normal', 'uniform', 'mixed'])
@@ -57,11 +58,11 @@ class InitializationSampler:
         
         # Sample base data
         if dist_type == 'normal':
-            data = self._sample_normal(n_samples, n_roots)
+            data = self._sample_normal(n_samples, n_roots, vector_dim)
         elif dist_type == 'uniform':
-            data = self._sample_uniform(n_samples, n_roots)
+            data = self._sample_uniform(n_samples, n_roots, vector_dim)
         elif dist_type == 'mixed':
-            data = self._sample_mixed(n_samples, n_roots)
+            data = self._sample_mixed(n_samples, n_roots, vector_dim)
         else:
             raise ValueError(f"Unknown distribution type: {dist_type}")
         
@@ -71,39 +72,41 @@ class InitializationSampler:
         
         return data
     
-    def _sample_normal(self, n_samples: int, n_features: int) -> np.ndarray:
+    def _sample_normal(self, n_samples: int, n_features: int, vector_dim: int) -> np.ndarray:
         """Sample from normal distribution.
         
         Args:
             n_samples: Number of samples
             n_features: Number of features
+            vector_dim: Vector dimension
             
         Returns:
-            Normal samples
+            Normal samples (n_samples, n_features, vector_dim)
         """
         params = self.config.get('normal', {})
         mean = params.get('mean', 0)
         std = params.get('std', 1)
         
-        return self.rng.normal(mean, std, (n_samples, n_features))
+        return self.rng.normal(mean, std, (n_samples, n_features, vector_dim))
     
-    def _sample_uniform(self, n_samples: int, n_features: int) -> np.ndarray:
+    def _sample_uniform(self, n_samples: int, n_features: int, vector_dim: int) -> np.ndarray:
         """Sample from uniform distribution.
         
         Args:
             n_samples: Number of samples
             n_features: Number of features
+            vector_dim: Vector dimension
             
         Returns:
-            Uniform samples
+            Uniform samples (n_samples, n_features, vector_dim)
         """
         params = self.config.get('uniform', {})
         low = params.get('low', -1)
         high = params.get('high', 1)
         
-        return self.rng.uniform(low, high, (n_samples, n_features))
+        return self.rng.uniform(low, high, (n_samples, n_features, vector_dim))
     
-    def _sample_mixed(self, n_samples: int, n_features: int) -> np.ndarray:
+    def _sample_mixed(self, n_samples: int, n_features: int, vector_dim: int) -> np.ndarray:
         """Sample from mixed distributions.
         
         Each feature gets a random distribution type.
@@ -111,19 +114,20 @@ class InitializationSampler:
         Args:
             n_samples: Number of samples
             n_features: Number of features
+            vector_dim: Vector dimension
             
         Returns:
-            Mixed samples
+            Mixed samples (n_samples, n_features, vector_dim)
         """
-        data = np.zeros((n_samples, n_features))
+        data = np.zeros((n_samples, n_features, vector_dim))
         
         for j in range(n_features):
             if self.rng.random() < 0.5:
                 # Normal
-                data[:, j] = self._sample_normal(n_samples, 1).flatten()
+                data[:, j, :] = self._sample_normal(n_samples, 1, vector_dim)[:, 0, :]
             else:
                 # Uniform
-                data[:, j] = self._sample_uniform(n_samples, 1).flatten()
+                data[:, j, :] = self._sample_uniform(n_samples, 1, vector_dim)[:, 0, :]
         
         return data
     
@@ -134,12 +138,12 @@ class InitializationSampler:
         prototype samples, following the TabPFN paper approach.
         
         Args:
-            data: Independent samples
+            data: Independent samples (n_samples, n_features, vector_dim)
             
         Returns:
-            Non-independent samples
+            Non-independent samples (n_samples, n_features, vector_dim)
         """
-        n_samples, n_features = data.shape
+        n_samples, n_features, vector_dim = data.shape
         
         # Get non-independence parameters
         ni_config = self.config.get('non_independence', {})
@@ -151,7 +155,7 @@ class InitializationSampler:
         
         # Select prototype samples
         prototype_idx = self.rng.choice(n_samples, n_prototypes, replace=False)
-        prototypes = data[prototype_idx].copy()
+        prototypes = data[prototype_idx].copy()  # (n_prototypes, n_features, vector_dim)
         
         # Mix samples with prototypes
         mixed_data = np.zeros_like(data)
@@ -164,14 +168,15 @@ class InitializationSampler:
                 # Sample mixing weights from Dirichlet distribution
                 # Temperature controls concentration
                 alpha = np.ones(n_prototypes) / temperature
-                weights = self.rng.dirichlet(alpha)
+                weights = self.rng.dirichlet(alpha)  # (n_prototypes,)
                 
                 # Mix with prototypes
-                mixed_data[i] = weights @ prototypes
+                # weights @ prototypes gives (n_features, vector_dim)
+                mixed_data[i] = np.tensordot(weights, prototypes, axes=([0], [0]))
                 
                 # Add some noise to maintain variation
                 noise_scale = 0.1
-                mixed_data[i] += self.rng.normal(0, noise_scale, n_features)
+                mixed_data[i] += self.rng.normal(0, noise_scale, (n_features, vector_dim))
         
         return mixed_data
     

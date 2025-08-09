@@ -49,15 +49,11 @@ class NeuralNetworkEdge(EdgeFunction):
         """Apply neural network transformation.
         
         Args:
-            x: Input data (n_samples,) or (n_samples, n_features)
+            x: Input data (n_samples, vector_dim)
             
         Returns:
-            Transformed data
+            Transformed data (n_samples, vector_dim)
         """
-        # Ensure input is 2D
-        if x.ndim == 1:
-            x = x.reshape(-1, 1)
-        
         # Forward pass through network
         h = x
         for i, (W, b, act_name) in enumerate(zip(self.weights, self.biases, self.activations)):
@@ -70,10 +66,6 @@ class NeuralNetworkEdge(EdgeFunction):
             else:
                 logger.warning(f"Unknown activation {act_name}, using identity")
                 pass
-        
-        # Return as 1D if output is single dimensional
-        if h.shape[1] == 1:
-            h = h.flatten()
         
         return h
     
@@ -92,12 +84,14 @@ class NeuralNetworkEdge(EdgeFunction):
     
     @classmethod
     def create_random(cls, config: Dict[str, Any], 
-                     rng: Optional[np.random.RandomState] = None) -> 'NeuralNetworkEdge':
+                     rng: Optional[np.random.RandomState] = None,
+                     vector_dim: int = 8) -> 'NeuralNetworkEdge':
         """Create a random neural network edge.
         
         Args:
             config: Configuration dictionary
             rng: Random number generator
+            vector_dim: Input/output vector dimension
             
         Returns:
             Random neural network edge
@@ -118,15 +112,18 @@ class NeuralNetworkEdge(EdgeFunction):
         biases = []
         activations = []
         
-        # Input dimension is always 1 for univariate edge
-        input_dim = 1
+        # Input/output dimension is vector_dim
+        input_dim = vector_dim
         
         for i in range(n_layers):
             # Sample hidden dimension
             if i < n_layers - 1:
                 output_dim = rng.choice(hidden_dims)
             else:
-                output_dim = 1  # Final layer outputs scalar
+                # Final layer outputs vector_dim to maintain dimensionality
+                output_dim = vector_dim
+                # Final layer outputs vector_dim to maintain dimensionality
+                output_dim = vector_dim
             
             # Initialize weights (Xavier/He initialization)
             activation = rng.choice(activations_pool)

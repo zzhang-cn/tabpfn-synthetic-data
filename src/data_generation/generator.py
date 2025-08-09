@@ -97,6 +97,9 @@ class SyntheticDataGenerator:
             n_samples = max_cells // n_features
             logger.warning(f"Reduced samples to {n_samples} to stay under max_cells limit")
         
+        # Get vector dimension from config
+        vector_dim = self.config.get('edges.vector_dim', 8)
+        
         # Generate causal graph
         n_nodes = max(n_features + 1, int(n_features * 1.5))  # Extra nodes for latent variables
         graph = self.graph_generator.generate_graph(n_nodes)
@@ -104,37 +107,24 @@ class SyntheticDataGenerator:
         # Create edge functions
         edge_functions = {}
         for edge in graph.edges():
-            edge_functions[edge] = self.edge_factory.create_random_edge()
+            edge_functions[edge] = self.edge_factory.create_random_edge(vector_dim)
         
         # Create SCM
         scm = StructuralCausalModel(graph, edge_functions)
         
         # Sample initialization data
-        init_data = self.init_sampler.sample(n_samples, graph)
+        init_data = self.init_sampler.sample(n_samples, graph, vector_dim)
         
         # Generate data through SCM
-        node_data = scm.sample(n_samples, init_data)
+        node_data = scm.sample(n_samples, init_data, vector_dim)
         
-        # Select feature and target nodes
-        all_nodes = list(graph.nodes())
-        self.rng.shuffle(all_nodes)
-        
-        # Select nodes for features and target
-        feature_nodes = all_nodes[:n_features]
-        
-        if task_type == 'classification':
-            # Find or create categorical target
-            target_node = self._select_categorical_target(node_data, all_nodes[n_features:])
-        else:
-            # Select continuous target
-            target_node = all_nodes[n_features] if len(all_nodes) > n_features else all_nodes[-1]
-        
-        # Extract features and target
-        X = np.column_stack([node_data[node] for node in feature_nodes])
-        y = node_data[target_node]
+        # Select features and targets from all available vector components
+        X, y, task_type_detected, feature_metadata = self._select_features_and_target(
+            node_data, n_features, task_type, edge_functions
+        )
         
         # Apply post-processing
-        X, y = self.post_processor.process(X, y, task_type)
+        X, y = self.post_processor.process(X, y, task_type_detected)
         
         # Split into train/test
         train_ratio = self.config.get('dataset.train_val_split', 0.8)
@@ -149,7 +139,7 @@ class SyntheticDataGenerator:
         dataset = {
             'train': (X[train_idx], y[train_idx]),
             'test': (X[test_idx], y[test_idx]),
-            'task_type': task_type,
+            'task_type': task_type_detected,
             'n_features': n_features,
             'n_samples': n_samples
         }
@@ -157,11 +147,11 @@ class SyntheticDataGenerator:
         if return_metadata:
             metadata = {
                 'graph_stats': self.graph_generator.visualize_graph(graph),
-                'feature_nodes': feature_nodes,
-                'target_node': target_node,
+                'feature_metadata': feature_metadata,
                 'edge_types': {str(e): ef.get_params()['type'] 
                               for e, ef in edge_functions.items()},
-                'post_processing_applied': self.post_processor.get_applied_transforms()
+                'post_processing_applied': self.post_processor.get_applied_transforms(),
+                'vector_dim': vector_dim
             }
             return dataset, metadata
         
@@ -230,6 +220,133 @@ class SyntheticDataGenerator:
             return int(sample[0])
         else:
             return self.rng.randint(1, 161)
+    
+    def _select_features_and_target(self, node_data: Dict[int, np.ndarray], 
+                                   n_features: int, task_type: str,
+                                   edge_functions: Dict) -> Tuple[np.ndarray, np.ndarray, str, Dict]:
+        """Select features and target from all vector components in nodes.
+        
+        Args:
+            node_data: Data for all nodes (node_id -> (n_samples, vector_dim))
+            n_features: Number of features to select
+            task_type: Requested task type ('classification', 'regression', or 'auto')
+            edge_functions: Dictionary of edge functions for discretization detection
+            
+        Returns:
+            Tuple of (X, y, detected_task_type, metadata)
+        """
+        # Get all available features from all nodes
+        all_features = []
+        feature_metadata = []
+        
+        # Track which nodes have discretization edges (for categorical features)
+        discretization_nodes = set()
+        for (source, target), edge_func in edge_functions.items():
+            if hasattr(edge_func, 'get_params') and edge_func.get_params().get('type') == 'discretization':
+                discretization_nodes.add(target)
+        
+        # Collect all vector components from all nodes
+        for node_id, data in node_data.items():
+            # data shape: (n_samples, vector_dim)
+            n_samples, vector_dim = data.shape
+            
+            if node_id in discretization_nodes:
+                # For discretization nodes, get categorical values
+                # Find the discretization edge function
+                disc_edge = None
+                for (source, target), edge_func in edge_functions.items():
+                    if target == node_id and hasattr(edge_func, 'get_categorical_indices'):
+                        disc_edge = edge_func
+                        break
+                
+                if disc_edge is not None:
+                    # Get categorical indices instead of continuous values
+                    categorical_values = disc_edge.get_categorical_indices(data)  # (n_samples,)
+                    all_features.append(categorical_values)
+                    feature_metadata.append({
+                        'node_id': node_id,
+                        'component_id': 'categorical',
+                        'type': 'categorical',
+                        'n_categories': len(np.unique(categorical_values))
+                    })
+                else:
+                    # Fallback: use continuous values from each vector component
+                    for dim in range(vector_dim):
+                        all_features.append(data[:, dim])
+                        feature_metadata.append({
+                            'node_id': node_id,
+                            'component_id': dim,
+                            'type': 'continuous'
+                        })
+            else:
+                # For non-discretization nodes, use all vector components
+                for dim in range(vector_dim):
+                    all_features.append(data[:, dim])
+                    feature_metadata.append({
+                        'node_id': node_id,
+                        'component_id': dim,
+                        'type': 'continuous'
+                    })
+        
+        # Shuffle features randomly
+        feature_indices = list(range(len(all_features)))
+        self.rng.shuffle(feature_indices)
+        
+        # Select n_features features
+        selected_indices = feature_indices[:n_features]
+        X_features = [all_features[i] for i in selected_indices]
+        X_metadata = [feature_metadata[i] for i in selected_indices]
+        
+        # Select target from remaining features
+        remaining_indices = feature_indices[n_features:]
+        if not remaining_indices:
+            # If no features left, use the last selected feature as target
+            target_idx = selected_indices[-1]
+            # Remove from features
+            X_features = X_features[:-1]
+            X_metadata = X_metadata[:-1]
+        else:
+            target_idx = remaining_indices[0]
+        
+        target_feature = all_features[target_idx]
+        target_metadata = feature_metadata[target_idx]
+        
+        # Determine task type based on target
+        if task_type == 'auto' or task_type == 'classification':
+            if target_metadata['type'] == 'categorical':
+                detected_task_type = 'classification'
+                y = target_feature.astype(int)
+            else:
+                # Check if continuous feature looks categorical
+                n_unique = len(np.unique(target_feature))
+                if n_unique <= 10 and n_unique >= 2:
+                    detected_task_type = 'classification'
+                    y = target_feature.astype(int)
+                else:
+                    if task_type == 'classification':
+                        # Force classification by discretizing
+                        n_classes = min(n_unique, self.rng.randint(2, 11))
+                        quantiles = np.linspace(0, 100, n_classes + 1)[1:-1]
+                        thresholds = np.percentile(target_feature, quantiles)
+                        y = np.digitize(target_feature, thresholds)
+                        detected_task_type = 'classification'
+                    else:
+                        detected_task_type = 'regression'
+                        y = target_feature
+        else:
+            # Regression
+            detected_task_type = 'regression'
+            y = target_feature
+        
+        # Stack features
+        X = np.column_stack(X_features)  # (n_samples, n_features)
+        
+        metadata = {
+            'feature_metadata': X_metadata,
+            'target_metadata': target_metadata
+        }
+        
+        return X, y, detected_task_type, metadata
     
     def _select_categorical_target(self, 
                                   node_data: Dict[int, np.ndarray],

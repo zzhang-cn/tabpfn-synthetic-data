@@ -38,15 +38,17 @@ class StructuralCausalModel:
         
         logger.debug(f"Initialized SCM with {graph.number_of_nodes()} nodes")
     
-    def sample(self, n_samples: int, initialization_data: Optional[np.ndarray] = None) -> Dict[int, np.ndarray]:
+    def sample(self, n_samples: int, initialization_data: Optional[np.ndarray] = None, 
+               vector_dim: int = 8) -> Dict[int, np.ndarray]:
         """Sample data from the SCM.
         
         Args:
             n_samples: Number of samples to generate
-            initialization_data: Initial values for root nodes
+            initialization_data: Initial values for root nodes (n_samples, n_root_nodes, vector_dim)
+            vector_dim: Dimension of node vectors
             
         Returns:
-            Dictionary mapping node indices to data arrays
+            Dictionary mapping node indices to data arrays (n_samples, vector_dim)
         """
         # Initialize data storage
         node_data = {}
@@ -59,13 +61,13 @@ class StructuralCausalModel:
             # Use provided initialization
             for i, node in enumerate(root_nodes):
                 if i < initialization_data.shape[1]:
-                    node_data[node] = initialization_data[:, i]
+                    node_data[node] = initialization_data[:, i, :]  # (n_samples, vector_dim)
                 else:
-                    node_data[node] = self._sample_noise(node, n_samples)
+                    node_data[node] = self._sample_noise(node, n_samples, vector_dim)
         else:
             # Sample from noise distributions
             for node in root_nodes:
-                node_data[node] = self._sample_noise(node, n_samples)
+                node_data[node] = self._sample_noise(node, n_samples, vector_dim)
         
         # Propagate through graph in topological order
         for node in self.topological_order:
@@ -77,40 +79,41 @@ class StructuralCausalModel:
             
             if not parents:
                 # No parents, sample from noise
-                node_data[node] = self._sample_noise(node, n_samples)
+                node_data[node] = self._sample_noise(node, n_samples, vector_dim)
             else:
                 # Compute from parents
                 parent_data = [node_data[p] for p in parents]
                 
                 # Initialize with zeros
-                node_value = np.zeros(n_samples)
+                node_value = np.zeros((n_samples, vector_dim))
                 
                 # Apply edge functions
                 for parent in parents:
                     edge = (parent, node)
                     if edge in self.edge_functions:
                         func = self.edge_functions[edge]
-                        parent_value = node_data[parent]
+                        parent_value = node_data[parent]  # (n_samples, vector_dim)
                         
                         # Apply function
-                        contribution = func(parent_value)
+                        contribution = func(parent_value)  # (n_samples, vector_dim)
                         node_value = node_value + contribution
                 
                 # Add noise
-                noise = self._sample_noise(node, n_samples)
+                noise = self._sample_noise(node, n_samples, vector_dim)
                 node_data[node] = node_value + noise
         
         return node_data
     
-    def _sample_noise(self, node: int, n_samples: int) -> np.ndarray:
+    def _sample_noise(self, node: int, n_samples: int, vector_dim: int = 8) -> np.ndarray:
         """Sample noise for a node.
         
         Args:
             node: Node index
             n_samples: Number of samples
+            vector_dim: Vector dimension
             
         Returns:
-            Noise samples
+            Noise samples (n_samples, vector_dim)
         """
         # Get noise parameters for this node
         params = self.noise_params.get(node, {})
@@ -119,13 +122,13 @@ class StructuralCausalModel:
         if noise_type == 'normal':
             mean = params.get('mean', 0)
             std = params.get('std', 0.1)
-            return np.random.normal(mean, std, n_samples)
+            return np.random.normal(mean, std, (n_samples, vector_dim))
         elif noise_type == 'uniform':
             low = params.get('low', -0.1)
             high = params.get('high', 0.1)
-            return np.random.uniform(low, high, n_samples)
+            return np.random.uniform(low, high, (n_samples, vector_dim))
         elif noise_type == 'zero':
-            return np.zeros(n_samples)
+            return np.zeros((n_samples, vector_dim))
         else:
             raise ValueError(f"Unknown noise type: {noise_type}")
     

@@ -73,11 +73,11 @@ from src.data_generation import SyntheticDataGenerator
 # Create a generator
 generator = SyntheticDataGenerator(seed=42)
 
-# Generate a classification dataset
+# Generate a dataset (task type auto-detected based on selected target)
 dataset = generator.generate_dataset(
     n_samples=1000,
     n_features=20,
-    task_type='classification'
+    task_type='auto'  # Can be 'classification', 'regression', or 'auto'
 )
 
 # Extract the data
@@ -85,7 +85,9 @@ X_train, y_train = dataset['train']
 X_test, y_test = dataset['test']
 
 print(f"Training shape: {X_train.shape}")
-print(f"Number of classes: {len(np.unique(y_train))}")
+print(f"Task type: {dataset['task_type']}")
+if dataset['task_type'] == 'classification':
+    print(f"Number of classes: {len(np.unique(y_train))}")
 ```
 
 ## 🧠 Understanding the Code
