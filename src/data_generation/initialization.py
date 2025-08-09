@@ -67,8 +67,8 @@ class InitializationSampler:
             raise ValueError(f"Unknown distribution type: {dist_type}")
         
         # Apply non-independence if configured
-        if self.config.get('non_independence.enabled', True):
-            data = self._apply_non_independence(data)
+        #if self.config.get('non_independence.enabled', True):
+            #data = self._apply_non_independence(data)
         
         return data
     

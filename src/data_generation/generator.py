@@ -101,8 +101,7 @@ class SyntheticDataGenerator:
         vector_dim = self.config.get('edges.vector_dim', 8)
         
         # Generate causal graph
-        n_nodes = max(n_features + 1, int(n_features * 1.5))  # Extra nodes for latent variables
-        graph = self.graph_generator.generate_graph(n_nodes)
+        graph = self.graph_generator.generate_graph()
         
         # Create edge functions
         edge_functions = {}
@@ -147,12 +146,12 @@ class SyntheticDataGenerator:
         if return_metadata:
             metadata = {
                 'graph_stats': self.graph_generator.visualize_graph(graph),
-                'feature_metadata': feature_metadata,
                 'edge_types': {str(e): ef.get_params()['type'] 
                               for e, ef in edge_functions.items()},
                 'post_processing_applied': self.post_processor.get_applied_transforms(),
                 'vector_dim': vector_dim
             }
+            metadata.update(feature_metadata)
             return dataset, metadata
         
         return dataset
@@ -288,31 +287,116 @@ class SyntheticDataGenerator:
                         'type': 'continuous'
                     })
         
-        # Shuffle features randomly
-        feature_indices = list(range(len(all_features)))
-        self.rng.shuffle(feature_indices)
+        # Separate categorical and continuous features from all available features
+        categorical_indices = []
+        continuous_indices = []
         
-        # Select n_features features
-        selected_indices = feature_indices[:n_features]
-        X_features = [all_features[i] for i in selected_indices]
-        X_metadata = [feature_metadata[i] for i in selected_indices]
+        for i, metadata in enumerate(feature_metadata):
+            if metadata['type'] == 'categorical':
+                categorical_indices.append(i)
+            else:
+                continuous_indices.append(i)
         
-        # Select target from remaining features
-        remaining_indices = feature_indices[n_features:]
-        if not remaining_indices:
-            # If no features left, use the last selected feature as target
-            target_idx = selected_indices[-1]
-            # Remove from features
-            X_features = X_features[:-1]
-            X_metadata = X_metadata[:-1]
-        else:
-            target_idx = remaining_indices[0]
+        # Select features based on task type requirements
+        total_needed = n_features + 1
+        if len(all_features) < total_needed:
+            total_needed = len(all_features)
+            if total_needed < 2:
+                raise ValueError("Not enough features available. Need at least 2 features (including target).")
         
-        target_feature = all_features[target_idx]
-        target_metadata = feature_metadata[target_idx]
+        selected_indices = []
         
-        # Determine task type based on target
-        if task_type == 'auto' or task_type == 'classification':
+        if task_type == 'classification':
+            # Must include at least one categorical feature for classification
+            if len(categorical_indices) == 0:
+                raise ValueError(
+                    "Classification task requested but no categorical features available. "
+                    "Please retry with different configuration or increase discretization edge probability."
+                )
+            
+            # First, randomly select one categorical feature (for target)
+            selected_categorical = self.rng.choice(categorical_indices)
+            selected_indices.append(selected_categorical)
+            
+            # Remove selected categorical from available pool
+            remaining_categorical = [idx for idx in categorical_indices if idx != selected_categorical]
+            remaining_continuous = continuous_indices.copy()
+            
+            # Combine remaining features and shuffle
+            remaining_indices = remaining_categorical + remaining_continuous
+            self.rng.shuffle(remaining_indices)
+            
+            # Select remaining features needed
+            remaining_needed = total_needed - 1
+            selected_indices.extend(remaining_indices[:remaining_needed])
+            
+        elif task_type == 'regression':
+            # Must include at least one continuous feature for regression
+            if len(continuous_indices) == 0:
+                raise ValueError(
+                    "Regression task requested but no continuous features available. "
+                    "Please retry with different configuration or decrease discretization edge probability."
+                )
+            
+            # First, randomly select one continuous feature (for target)
+            selected_continuous = self.rng.choice(continuous_indices)
+            selected_indices.append(selected_continuous)
+            
+            # Remove selected continuous from available pool
+            remaining_continuous = [idx for idx in continuous_indices if idx != selected_continuous]
+            remaining_categorical = categorical_indices.copy()
+            
+            # Combine remaining features and shuffle
+            remaining_indices = remaining_continuous + remaining_categorical
+            self.rng.shuffle(remaining_indices)
+            
+            # Select remaining features needed
+            remaining_needed = total_needed - 1
+            selected_indices.extend(remaining_indices[:remaining_needed])
+            
+        else:  # task_type == 'auto'
+            # Random selection for auto detection
+            all_indices = list(range(len(all_features)))
+            self.rng.shuffle(all_indices)
+            selected_indices = all_indices[:total_needed]
+        
+        # Extract selected features and metadata
+        selected_features = [all_features[i] for i in selected_indices]
+        selected_metadata = [feature_metadata[i] for i in selected_indices]
+        
+        # Separate selected features by type for target selection
+        selected_categorical_indices = []
+        selected_continuous_indices = []
+        
+        for i, metadata in enumerate(selected_metadata):
+            if metadata['type'] == 'categorical':
+                selected_categorical_indices.append(i)
+            else:
+                selected_continuous_indices.append(i)
+        
+        # Handle target selection based on task type
+        if task_type == 'classification':
+            # Select target from categorical features (guaranteed to have at least one)
+            target_pool_idx = self.rng.choice(selected_categorical_indices)
+            target_feature = selected_features[target_pool_idx]
+            target_metadata = selected_metadata[target_pool_idx]
+            detected_task_type = 'classification'
+            y = target_feature.astype(int)
+            
+        elif task_type == 'regression':
+            # Select target from continuous features (guaranteed to have at least one)
+            target_pool_idx = self.rng.choice(selected_continuous_indices)
+            target_feature = selected_features[target_pool_idx]
+            target_metadata = selected_metadata[target_pool_idx]
+            detected_task_type = 'regression'
+            y = target_feature
+            
+        else:  # task_type == 'auto'
+            # Pick any feature as target and infer task type
+            target_pool_idx = self.rng.choice(len(selected_features))
+            target_feature = selected_features[target_pool_idx]
+            target_metadata = selected_metadata[target_pool_idx]
+            
             if target_metadata['type'] == 'categorical':
                 detected_task_type = 'classification'
                 y = target_feature.astype(int)
@@ -323,20 +407,24 @@ class SyntheticDataGenerator:
                     detected_task_type = 'classification'
                     y = target_feature.astype(int)
                 else:
-                    if task_type == 'classification':
-                        # Force classification by discretizing
-                        n_classes = min(n_unique, self.rng.randint(2, 11))
-                        quantiles = np.linspace(0, 100, n_classes + 1)[1:-1]
-                        thresholds = np.percentile(target_feature, quantiles)
-                        y = np.digitize(target_feature, thresholds)
-                        detected_task_type = 'classification'
-                    else:
-                        detected_task_type = 'regression'
-                        y = target_feature
-        else:
-            # Regression
-            detected_task_type = 'regression'
-            y = target_feature
+                    detected_task_type = 'regression'
+                    y = target_feature
+        
+        # Remove target from features to create X
+        X_features = []
+        X_metadata = []
+        
+        for i, (feature, metadata) in enumerate(zip(selected_features, selected_metadata)):
+            if i != target_pool_idx:
+                X_features.append(feature)
+                X_metadata.append(metadata)
+        
+        # If we selected n_features + 1 but only need n_features for X, remove one more
+        if len(X_features) > n_features:
+            # Remove a random feature (not the target)
+            remove_idx = self.rng.choice(len(X_features))
+            X_features.pop(remove_idx)
+            X_metadata.pop(remove_idx)
         
         # Stack features
         X = np.column_stack(X_features)  # (n_samples, n_features)

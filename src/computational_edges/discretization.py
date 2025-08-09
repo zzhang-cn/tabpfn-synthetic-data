@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List, Tuple
 import logging
 from scipy.spatial.distance import cdist
 
-from .edge_functions import EdgeFunction
+from .edge_functions import EdgeFunction, embedding_init
 
 logger = logging.getLogger(__name__)
 
@@ -104,14 +104,10 @@ class DiscretizationEdge(EdgeFunction):
         n_categories = min(n_categories, disc_config.get('max_categories', 15))
         
         # Generate prototype vectors for nearest neighbor mapping
-        prototype_vectors = rng.normal(0, 1, (n_categories, vector_dim))
+        prototype_vectors = embedding_init((n_categories, vector_dim), rng=rng)
         
         # Generate embedding vectors for categorical representation
-        embedding_vectors = rng.normal(0, 1, (n_categories, vector_dim))
-        
-        # Normalize vectors for better numerical stability
-        prototype_vectors = prototype_vectors / np.linalg.norm(prototype_vectors, axis=1, keepdims=True)
-        embedding_vectors = embedding_vectors / np.linalg.norm(embedding_vectors, axis=1, keepdims=True)
+        embedding_vectors = embedding_init((n_categories, vector_dim), rng=rng)
         
         return cls(prototype_vectors, embedding_vectors)
     

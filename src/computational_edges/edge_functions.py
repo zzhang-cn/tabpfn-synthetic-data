@@ -8,6 +8,115 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def xavier_uniform_init(shape: tuple, gain: float = 1.0, 
+                       rng: Optional[np.random.RandomState] = None) -> np.ndarray:
+    """Xavier/Glorot uniform initialization.
+    
+    Args:
+        shape: Shape of the weight tensor
+        gain: Scaling factor
+        rng: Random number generator
+        
+    Returns:
+        Initialized weights
+    """
+    if rng is None:
+        rng = np.random.RandomState()
+    
+    fan_in = shape[0] if len(shape) >= 2 else 1
+    fan_out = shape[1] if len(shape) >= 2 else shape[0]
+    
+    # Xavier uniform bound
+    bound = gain * np.sqrt(6.0 / (fan_in + fan_out))
+    return rng.uniform(-bound, bound, shape)
+
+
+def xavier_normal_init(shape: tuple, gain: float = 1.0, 
+                      rng: Optional[np.random.RandomState] = None) -> np.ndarray:
+    """Xavier/Glorot normal initialization.
+    
+    Args:
+        shape: Shape of the weight tensor
+        gain: Scaling factor
+        rng: Random number generator
+        
+    Returns:
+        Initialized weights
+    """
+    if rng is None:
+        rng = np.random.RandomState()
+    
+    fan_in = shape[0] if len(shape) >= 2 else 1
+    fan_out = shape[1] if len(shape) >= 2 else shape[0]
+    
+    # Xavier normal std
+    std = gain * np.sqrt(2.0 / (fan_in + fan_out))
+    return rng.normal(0, std, shape)
+
+
+def he_uniform_init(shape: tuple, 
+                   rng: Optional[np.random.RandomState] = None) -> np.ndarray:
+    """He uniform initialization (for ReLU activations).
+    
+    Args:
+        shape: Shape of the weight tensor
+        rng: Random number generator
+        
+    Returns:
+        Initialized weights
+    """
+    if rng is None:
+        rng = np.random.RandomState()
+    
+    fan_in = shape[0] if len(shape) >= 2 else 1
+    
+    # He uniform bound
+    bound = np.sqrt(6.0 / fan_in)
+    return rng.uniform(-bound, bound, shape)
+
+
+def he_normal_init(shape: tuple, 
+                  rng: Optional[np.random.RandomState] = None) -> np.ndarray:
+    """He normal initialization (for ReLU activations).
+    
+    Args:
+        shape: Shape of the weight tensor
+        rng: Random number generator
+        
+    Returns:
+        Initialized weights
+    """
+    if rng is None:
+        rng = np.random.RandomState()
+    
+    fan_in = shape[0] if len(shape) >= 2 else 1
+    
+    # He normal std
+    std = np.sqrt(2.0 / fan_in)
+    return rng.normal(0, std, shape)
+
+
+def embedding_init(shape: tuple, scale: float = 1.0,
+                  rng: Optional[np.random.RandomState] = None) -> np.ndarray:
+    """Embedding initialization using scaled normal distribution.
+    
+    Args:
+        shape: Shape of the embedding tensor
+        scale: Scaling factor
+        rng: Random number generator
+        
+    Returns:
+        Initialized embeddings
+    """
+    if rng is None:
+        rng = np.random.RandomState()
+    
+    # Use normal distribution scaled by 1/sqrt(embedding_dim)
+    embedding_dim = shape[-1] if len(shape) >= 2 else shape[0]
+    std = scale / np.sqrt(embedding_dim)
+    return rng.normal(0, std, shape)
+
+
 class EdgeFunction(ABC):
     """Abstract base class for edge functions in SCM."""
     
@@ -332,10 +441,9 @@ class EdgeFunctionFactory:
             return IdentityEdge()
         
         elif edge_type == 'linear':
-            weight_matrix = self.rng.normal(0, 0.3, (vector_dim, vector_dim))
-            # Add identity component for stability
-            weight_matrix += np.eye(vector_dim)
-            bias = self.rng.normal(0, 0.1, vector_dim)
+            # Use Xavier initialization for better numerical stability
+            weight_matrix = xavier_normal_init((vector_dim, vector_dim), gain=1.0, rng=self.rng)
+            bias = self.rng.normal(0, 0.1, vector_dim)  # Initialize bias to small values
             return LinearEdge(weight_matrix, bias, vector_dim)
         
         elif edge_type == 'nonlinear':
