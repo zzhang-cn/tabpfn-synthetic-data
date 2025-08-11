@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import sys
+import json
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,10 +23,11 @@ def example_basic_generation():
     generator = SyntheticDataGenerator(seed=42)
     
     # Generate a classification dataset
-    dataset = generator.generate_dataset(
+    dataset, metadata = generator.generate_dataset(
         n_samples=1000,
         n_features=10,
-        task_type='classification'
+        task_type='classification',
+        return_metadata=True,
     )
     
     # Extract data
@@ -36,7 +38,8 @@ def example_basic_generation():
     print(f"Test set shape: {X_test.shape}")
     print(f"Number of classes: {len(np.unique(y_train))}")
     print(f"Class distribution: {np.bincount(y_train)}")
-    
+    print(f"Metadata: {json.dumps(metadata, indent=2)}")
+
     return dataset
 
 
@@ -60,9 +63,6 @@ def example_with_metadata():
     for key, value in metadata['graph_stats'].items():
         print(f"  {key}: {value}")
     
-    print(f"\nFeature nodes: {metadata['feature_nodes'][:5]}...")
-    print(f"Target node: {metadata['target_node']}")
-    
     print("\nEdge types used:")
     edge_type_counts = {}
     for edge_type in metadata['edge_types'].values():
@@ -71,6 +71,104 @@ def example_with_metadata():
         print(f"  {edge_type}: {count}")
     
     print(f"\nPost-processing applied: {metadata['post_processing_applied']}")
+    print(f"Vector dimension used: {metadata['vector_dim']}")
+    
+    return dataset, metadata
+
+
+def example_feature_selection_logic():
+    """Example demonstrating the new feature selection logic."""
+    print("\n" + "=" * 50)
+    print("FEATURE SELECTION LOGIC EXAMPLES")
+    print("=" * 50)
+    
+    generator = SyntheticDataGenerator(seed=42)
+    
+    # Example 1: Classification task (requires categorical features)
+    print("1. Classification Task:")
+    try:
+        dataset, metadata = generator.generate_dataset(
+            n_samples=300,
+            n_features=3,
+            task_type='classification',
+            return_metadata=True
+        )
+        
+        print(f"   ✓ Success - Task type: {dataset['task_type']}")
+        print(f"   ✓ Features: {dataset['n_features']}")
+        
+        # Show feature types
+        categorical_count = sum(1 for meta in metadata['feature_metadata'] 
+                              if meta['type'] == 'categorical')
+        continuous_count = len(metadata['feature_metadata']) - categorical_count
+        
+        print(f"   ✓ Categorical features: {categorical_count}")
+        print(f"   ✓ Continuous features: {continuous_count}")
+        print(f"   ✓ Target type: {metadata['target_metadata']['type']}")
+        
+        if dataset['task_type'] == 'classification':
+            X_train, y_train = dataset['train']
+            print(f"   ✓ Classes: {len(np.unique(y_train))}")
+            
+    except ValueError as e:
+        print(f"   ✗ Error: {e}")
+        print("   → Try increasing discretization edge probability in config")
+    
+    # Example 2: Regression task (requires continuous features)
+    print("\n2. Regression Task:")
+    try:
+        dataset, metadata = generator.generate_dataset(
+            n_samples=300,
+            n_features=3,
+            task_type='regression',
+            return_metadata=True
+        )
+        
+        print(f"   ✓ Success - Task type: {dataset['task_type']}")
+        print(f"   ✓ Features: {dataset['n_features']}")
+        
+        # Show feature types
+        categorical_count = sum(1 for meta in metadata['feature_metadata'] 
+                              if meta['type'] == 'categorical')
+        continuous_count = len(metadata['feature_metadata']) - categorical_count
+        
+        print(f"   ✓ Categorical features: {categorical_count}")
+        print(f"   ✓ Continuous features: {continuous_count}")
+        print(f"   ✓ Target type: {metadata['target_metadata']['type']}")
+        
+        X_train, y_train = dataset['train']
+        print(f"   ✓ Target range: [{np.min(y_train):.3f}, {np.max(y_train):.3f}]")
+        
+    except ValueError as e:
+        print(f"   ✗ Error: {e}")
+        print("   → Try decreasing discretization edge probability in config")
+    
+    # Example 3: Auto detection
+    print("\n3. Auto Task Detection:")
+    dataset, metadata = generator.generate_dataset(
+        n_samples=300,
+        n_features=3,
+        task_type='auto',
+        return_metadata=True
+    )
+    
+    print(f"   ✓ Detected task type: {dataset['task_type']}")
+    print(f"   ✓ Features: {dataset['n_features']}")
+    
+    # Show feature types
+    categorical_count = sum(1 for meta in metadata['feature_metadata'] 
+                          if meta['type'] == 'categorical')
+    continuous_count = len(metadata['feature_metadata']) - categorical_count
+    
+    print(f"   ✓ Categorical features: {categorical_count}")
+    print(f"   ✓ Continuous features: {continuous_count}")
+    print(f"   ✓ Target type: {metadata['target_metadata']['type']}")
+    
+    X_train, y_train = dataset['train']
+    if dataset['task_type'] == 'classification':
+        print(f"   ✓ Classes: {len(np.unique(y_train))}")
+    else:
+        print(f"   ✓ Target range: [{np.min(y_train):.3f}, {np.max(y_train):.3f}]")
     
     return dataset, metadata
 
@@ -274,14 +372,20 @@ def main():
     # Run examples
     example_basic_generation()
     example_with_metadata()
-    example_batch_generation()
-    example_custom_config()
-    example_visualization()
-    example_save_load()
+    example_feature_selection_logic()
+    #example_batch_generation()
+    #example_custom_config()
+    #example_visualization()
+    #example_save_load()
     
     print("\n✅ All examples completed successfully!")
     print("\nYou can now use the SyntheticDataGenerator in your own projects.")
-    print("Check the generated PNG files for visualizations.")
+    print("Key features demonstrated:")
+    print("  • Vector-based node representation")
+    print("  • Automatic feature/target selection")
+    print("  • Categorical and continuous feature handling")
+    print("  • Task type auto-detection")
+    print("  • Custom configuration support")
 
 
 if __name__ == "__main__":

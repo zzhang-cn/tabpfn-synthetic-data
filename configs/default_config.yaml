@@ -30,6 +30,7 @@ graph:
 
 # Computational edge parameters
 edges:
+  vector_dim: 8  # Dimension of node vectors
   type_probabilities:
     neural_network: 0.4
     discretization: 0.2
@@ -43,10 +44,9 @@ edges:
     initialization: "xavier"
   
   discretization:
-    n_categories:
-      min: 2
-      max: 10
-    embedding_dim: 8
+    gamma_alpha: 2.0
+    gamma_scale: 1.5
+    max_categories: 15
   
   decision_tree:
     max_depth: 3

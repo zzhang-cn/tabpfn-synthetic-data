@@ -101,20 +101,31 @@ class DecisionTreeEdge(EdgeFunction):
         logger.debug(f"Created decision tree edge with depth {self.depth}")
     
     def __call__(self, x: np.ndarray) -> np.ndarray:
-        """Apply decision tree transformation.
+        """Apply decision tree transformation to vectors.
         
         Args:
-            x: Input data
+            x: Input vectors (n_samples, vector_dim)
             
         Returns:
-            Transformed data
+            Transformed vectors (n_samples, vector_dim)
         """
-        # Vectorized prediction
-        result = np.zeros_like(x)
-        for i, val in enumerate(x.flat):
-            result.flat[i] = self.root.predict(val)
+        # Use L2 norm of vectors as scalar input to decision tree
+        norms = np.linalg.norm(x, axis=1)  # (n_samples,)
         
-        return result.reshape(x.shape)
+        # Apply tree to norms
+        transformed_norms = np.zeros_like(norms)
+        for i, norm in enumerate(norms):
+            transformed_norms[i] = self.root.predict(norm)
+        
+        # Scale original vectors by the ratio of transformed to original norms
+        # Avoid division by zero
+        original_norms = norms + 1e-8
+        scale_factors = transformed_norms / original_norms
+        
+        # Scale each vector
+        result = x * scale_factors.reshape(-1, 1)
+        
+        return result
     
     def get_params(self) -> Dict[str, Any]:
         """Get decision tree parameters.
@@ -158,12 +169,14 @@ class DecisionTreeEdge(EdgeFunction):
     
     @classmethod
     def create_random(cls, config: Dict[str, Any],
-                     rng: Optional[np.random.RandomState] = None) -> 'DecisionTreeEdge':
+                     rng: Optional[np.random.RandomState] = None,
+                     vector_dim: int = 8) -> 'DecisionTreeEdge':
         """Create a random decision tree edge.
         
         Args:
             config: Configuration dictionary
             rng: Random number generator
+            vector_dim: Vector dimension (not used directly but kept for interface consistency)
             
         Returns:
             Random decision tree edge

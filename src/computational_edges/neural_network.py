@@ -4,7 +4,7 @@ import numpy as np
 from typing import Dict, Any, List, Optional
 import logging
 
-from .edge_functions import EdgeFunction
+from .edge_functions import EdgeFunction, he_normal_init, xavier_normal_init
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +49,11 @@ class NeuralNetworkEdge(EdgeFunction):
         """Apply neural network transformation.
         
         Args:
-            x: Input data (n_samples,) or (n_samples, n_features)
+            x: Input data (n_samples, vector_dim)
             
         Returns:
-            Transformed data
+            Transformed data (n_samples, vector_dim)
         """
-        # Ensure input is 2D
-        if x.ndim == 1:
-            x = x.reshape(-1, 1)
-        
         # Forward pass through network
         h = x
         for i, (W, b, act_name) in enumerate(zip(self.weights, self.biases, self.activations)):
@@ -70,10 +66,6 @@ class NeuralNetworkEdge(EdgeFunction):
             else:
                 logger.warning(f"Unknown activation {act_name}, using identity")
                 pass
-        
-        # Return as 1D if output is single dimensional
-        if h.shape[1] == 1:
-            h = h.flatten()
         
         return h
     
@@ -92,12 +84,14 @@ class NeuralNetworkEdge(EdgeFunction):
     
     @classmethod
     def create_random(cls, config: Dict[str, Any], 
-                     rng: Optional[np.random.RandomState] = None) -> 'NeuralNetworkEdge':
+                     rng: Optional[np.random.RandomState] = None,
+                     vector_dim: int = 8) -> 'NeuralNetworkEdge':
         """Create a random neural network edge.
         
         Args:
             config: Configuration dictionary
             rng: Random number generator
+            vector_dim: Input/output vector dimension
             
         Returns:
             Random neural network edge
@@ -118,28 +112,30 @@ class NeuralNetworkEdge(EdgeFunction):
         biases = []
         activations = []
         
-        # Input dimension is always 1 for univariate edge
-        input_dim = 1
+        # Input/output dimension is vector_dim
+        input_dim = vector_dim
         
         for i in range(n_layers):
             # Sample hidden dimension
             if i < n_layers - 1:
                 output_dim = rng.choice(hidden_dims)
             else:
-                output_dim = 1  # Final layer outputs scalar
+                # Final layer outputs vector_dim to maintain dimensionality
+                output_dim = vector_dim
+                # Final layer outputs vector_dim to maintain dimensionality
+                output_dim = vector_dim
             
-            # Initialize weights (Xavier/He initialization)
+            # Initialize weights using proper initialization functions
             activation = rng.choice(activations_pool)
             
             if activation in ['relu', 'leaky_relu', 'elu']:
                 # He initialization for ReLU variants
-                std = np.sqrt(2.0 / input_dim)
+                W = he_normal_init((input_dim, output_dim), rng=rng)
             else:
                 # Xavier initialization for others
-                std = np.sqrt(1.0 / input_dim)
+                W = xavier_normal_init((input_dim, output_dim), gain=1.0, rng=rng)
             
-            W = rng.normal(0, std, (input_dim, output_dim))
-            b = np.zeros(output_dim)
+            b = rng.normal(0, 0.1, output_dim)  # Initialize bias to small values
             
             weights.append(W)
             biases.append(b)

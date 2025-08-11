@@ -73,11 +73,18 @@ from src.data_generation import SyntheticDataGenerator
 # Create a generator
 generator = SyntheticDataGenerator(seed=42)
 
-# Generate a classification dataset
+# Generate a classification dataset (requires categorical features)
 dataset = generator.generate_dataset(
     n_samples=1000,
     n_features=20,
-    task_type='classification'
+    task_type='classification'  # Ensures categorical target selection
+)
+
+# Generate with auto task type detection
+dataset_auto = generator.generate_dataset(
+    n_samples=1000,
+    n_features=20,
+    task_type='auto'  # Task type inferred from target feature type
 )
 
 # Extract the data
@@ -85,7 +92,25 @@ X_train, y_train = dataset['train']
 X_test, y_test = dataset['test']
 
 print(f"Training shape: {X_train.shape}")
-print(f"Number of classes: {len(np.unique(y_train))}")
+print(f"Task type: {dataset['task_type']}")
+if dataset['task_type'] == 'classification':
+    print(f"Number of classes: {len(np.unique(y_train))}")
+
+# Get detailed information about features
+dataset_with_meta, metadata = generator.generate_dataset(
+    n_samples=500,
+    n_features=10,
+    task_type='auto',
+    return_metadata=True
+)
+
+# See feature types (categorical vs continuous)
+for i, feat_meta in enumerate(metadata['feature_metadata']):
+    feat_type = feat_meta['type']
+    if feat_type == 'categorical':
+        print(f"Feature {i}: {feat_type} ({feat_meta['n_categories']} categories)")
+    else:
+        print(f"Feature {i}: {feat_type}")
 ```
 
 ## 🧠 Understanding the Code
@@ -272,6 +297,44 @@ generator = SyntheticDataGenerator(
 )
 ```
 
+### Controlling Categorical Features
+
+Use the `max_categories` parameter to limit the number of classes in categorical features:
+
+```python
+# Create custom config with max 3 categories
+import yaml
+
+custom_config = {
+    'edges': {
+        'type_probabilities': {
+            'discretization': 0.4  # Increase probability of categorical features
+        },
+        'discretization': {
+            'max_categories': 3  # Limit to 3 categories maximum
+        }
+    }
+}
+
+# Save config
+with open('custom_config.yaml', 'w') as f:
+    yaml.dump(custom_config, f)
+
+# Use with generator
+generator = SyntheticDataGenerator(config_path='custom_config.yaml')
+
+# Classification task requires categorical features
+dataset = generator.generate_dataset(
+    n_features=3,
+    task_type='classification'  # Will use categorical features as target
+)
+```
+
+**Note**: 
+- `task_type='classification'` requires at least one categorical feature
+- `task_type='regression'` requires at least one continuous feature  
+- `task_type='auto'` infers task type from the selected target feature
+
 ### Extract Metadata
 
 ```python
@@ -282,9 +345,16 @@ dataset, metadata = generator.generate_dataset(
 
 print(f"Graph type: {metadata['graph_stats']['n_edges']} edges")
 print(f"Edge types used: {metadata['edge_types']}")
+
+# Check feature types
+for i, feat_meta in enumerate(metadata['feature_metadata']):
+    if feat_meta['type'] == 'categorical':
+        print(f"Feature {i}: categorical ({feat_meta['n_categories']} categories)")
+    else:
+        print(f"Feature {i}: continuous")
 ```
 
-See `examples/basic_usage.py` for more comprehensive examples.
+See `examples/basic_usage.py` and `examples/custom_config_example.py` for more comprehensive examples.
 
 ## 🧪 Testing
 

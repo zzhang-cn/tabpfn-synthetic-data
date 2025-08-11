@@ -1,53 +1,67 @@
 """Discretization edge for creating categorical features."""
 
 import numpy as np
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import logging
+from scipy.spatial.distance import cdist
 
-from .edge_functions import EdgeFunction
+from .edge_functions import EdgeFunction, embedding_init
 
 logger = logging.getLogger(__name__)
 
 
 class DiscretizationEdge(EdgeFunction):
-    """Edge that discretizes continuous values into categories."""
+    """Edge that discretizes vector values into categories using nearest neighbor mapping."""
     
-    def __init__(self, thresholds: np.ndarray, embeddings: Optional[np.ndarray] = None):
+    def __init__(self, prototype_vectors: np.ndarray, embedding_vectors: np.ndarray):
         """Initialize discretization edge.
         
         Args:
-            thresholds: Threshold values for binning
-            embeddings: Optional embedding vectors for each category
+            prototype_vectors: Prototype vectors for nearest neighbor mapping (K, vector_dim)
+            embedding_vectors: Embedding vectors for each category (K, vector_dim)
         """
-        self.thresholds = np.sort(thresholds)
-        self.n_categories = len(thresholds) + 1
-        
-        if embeddings is not None:
-            self.embeddings = embeddings
-        else:
-            # Default: one-hot style embeddings
-            self.embeddings = np.eye(self.n_categories)
+        self.prototype_vectors = prototype_vectors
+        self.embedding_vectors = embedding_vectors
+        self.n_categories = len(prototype_vectors)
         
         logger.debug(f"Created discretization edge with {self.n_categories} categories")
     
     def __call__(self, x: np.ndarray) -> np.ndarray:
-        """Apply discretization.
+        """Apply discretization using nearest neighbor mapping.
         
         Args:
-            x: Input continuous values
+            x: Input vectors (n_samples, vector_dim)
             
         Returns:
-            Discretized values or embeddings
+            Embedding vectors (n_samples, vector_dim)
         """
-        # Digitize input into bins
-        categories = np.digitize(x, self.thresholds)
+        # Compute distances to all prototypes
+        distances = cdist(x, self.prototype_vectors, metric='euclidean')  # (n_samples, K)
         
-        # If embeddings are 1D (scalar per category), return scalar
-        if self.embeddings.shape[1] == 1:
-            return self.embeddings[categories].flatten()
+        # Find nearest prototype for each sample
+        nearest_indices = np.argmin(distances, axis=1)  # (n_samples,)
         
-        # Otherwise return embedding vectors
-        return self.embeddings[categories]
+        # Map to embedding vectors
+        embedded = self.embedding_vectors[nearest_indices]  # (n_samples, vector_dim)
+        
+        return embedded
+    
+    def get_categorical_indices(self, x: np.ndarray) -> np.ndarray:
+        """Get categorical indices without embedding (for feature selection).
+        
+        Args:
+            x: Input vectors (n_samples, vector_dim)
+            
+        Returns:
+            Categorical indices (n_samples,)
+        """
+        # Compute distances to all prototypes
+        distances = cdist(x, self.prototype_vectors, metric='euclidean')
+        
+        # Find nearest prototype for each sample
+        nearest_indices = np.argmin(distances, axis=1)
+        
+        return nearest_indices
     
     def get_params(self) -> Dict[str, Any]:
         """Get discretization parameters.
@@ -58,18 +72,19 @@ class DiscretizationEdge(EdgeFunction):
         return {
             'type': 'discretization',
             'n_categories': self.n_categories,
-            'thresholds': self.thresholds.tolist(),
-            'embedding_dim': self.embeddings.shape[1]
+            'vector_dim': self.prototype_vectors.shape[1]
         }
     
     @classmethod
     def create_random(cls, config: Dict[str, Any],
-                     rng: Optional[np.random.RandomState] = None) -> 'DiscretizationEdge':
+                     rng: Optional[np.random.RandomState] = None,
+                     vector_dim: int = 8) -> 'DiscretizationEdge':
         """Create a random discretization edge.
         
         Args:
             config: Configuration dictionary
             rng: Random number generator
+            vector_dim: Vector dimension
             
         Returns:
             Random discretization edge
@@ -79,32 +94,22 @@ class DiscretizationEdge(EdgeFunction):
         
         disc_config = config.get('discretization', {})
         
-        # Sample number of categories
-        n_cat_range = disc_config.get('n_categories', {'min': 2, 'max': 10})
-        n_categories = rng.randint(n_cat_range['min'], n_cat_range['max'] + 1)
+        # Sample number of categories using gamma distribution as per paper
+        # Gamma distribution with offset of 2 for minimum 2 categories
+        alpha = disc_config.get('gamma_alpha', 2.0)
+        scale = disc_config.get('gamma_scale', 1.5)
         
-        # Generate thresholds
-        # Use quantiles of a standard normal for reasonable spacing
-        quantiles = np.linspace(0.1, 0.9, n_categories - 1)
-        thresholds = np.percentile(rng.normal(0, 1, 10000), quantiles * 100)
+        n_categories = max(2, int(np.round(rng.gamma(alpha, scale))) + 2)
+        # Cap at reasonable maximum
+        n_categories = min(n_categories, disc_config.get('max_categories', 15))
         
-        # Generate embeddings
-        embedding_dim = disc_config.get('embedding_dim', 1)
+        # Generate prototype vectors for nearest neighbor mapping
+        prototype_vectors = embedding_init((n_categories, vector_dim), rng=rng)
         
-        if embedding_dim == 1:
-            # Scalar embeddings - can be arbitrary values
-            embeddings = rng.normal(0, 1, (n_categories, 1))
-        else:
-            # Vector embeddings - orthogonal or random
-            if n_categories <= embedding_dim and rng.random() < 0.5:
-                # Use orthogonal embeddings (one-hot style)
-                embeddings = np.eye(n_categories, embedding_dim)
-            else:
-                # Random embeddings
-                embeddings = rng.normal(0, 1 / np.sqrt(embedding_dim), 
-                                       (n_categories, embedding_dim))
+        # Generate embedding vectors for categorical representation
+        embedding_vectors = embedding_init((n_categories, vector_dim), rng=rng)
         
-        return cls(thresholds, embeddings)
+        return cls(prototype_vectors, embedding_vectors)
     
     def get_category(self, x: np.ndarray) -> np.ndarray:
         """Get category indices for input values.
